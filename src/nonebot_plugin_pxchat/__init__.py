@@ -12,6 +12,7 @@ from .config import *
 import asyncio
 import random
 import json
+import re
 from .mcp_manager import *
 from typing import Dict, Set
 
@@ -32,6 +33,29 @@ get_plugin_config(PluginConfig)
 # 创建消息处理器，不限制规则，在handle中自行判断
 chat = on_message(priority=50, block=False)
 
+def _loads_reply(message: str):
+    """解析模型回复，兼容非 JSON 与 ```json 代码围栏。
+
+    模型偶尔不会严格返回 JSON（尤其开启 MCP 或换用不同模型后），
+    直接 json.loads 会抛异常并中断回复。这里统一做容错：
+    解析成功返回解析结果，失败返回 None，由调用方回退为纯文本。
+    """
+    text = (message or "").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.S)
+    if fence:
+        try:
+            return json.loads(fence.group(1))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
+
+
 async def send_split_messages(chat_handler, message: str, event: MessageEvent = None, delay_range: tuple = (2, 3)):
     """
     分段发送消息，支持@回复
@@ -44,17 +68,21 @@ async def send_split_messages(chat_handler, message: str, event: MessageEvent = 
         return
 
     segments = []
-    
-    # 尝试解析JSON格式
-    try:
-        data = json.loads(message)
-        if isinstance(data, dict) and "reply" in data and isinstance(data["reply"], list):
-            segments = [segment for segment in data["reply"] if segment and segment.strip()]
-    except (json.JSONDecodeError, TypeError) as e:
-        # 如果不是JSON，直接使用原消息
-        error_msg = f"处理聊天请求时发生异常:\n {str(e)}"
-        await send_error_to_super_users(error_msg, event)
-        return
+
+    data = _loads_reply(message)
+
+    if isinstance(data, dict):
+        reply = data.get("reply")
+        if isinstance(reply, list):
+            segments = [s for s in reply if isinstance(s, str) and s.strip()]
+        elif isinstance(reply, str) and reply.strip():
+            segments = [reply.strip()]
+    elif isinstance(data, list):
+        segments = [s for s in data if isinstance(s, str) and s.strip()]
+
+    # 不是结构化 JSON 回复时，退化为把整段文本作为一条消息发送，避免吞消息
+    if not segments and message.strip():
+        segments = [message.strip()]
 
     if not segments:
         return

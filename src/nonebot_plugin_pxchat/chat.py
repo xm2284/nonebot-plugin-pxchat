@@ -318,8 +318,12 @@ async def should_reply_in_group(messages: list) -> bool:
             if msg["role"] == "user":
                 judge_content.append(f"{msg['content']}")
             else:
-                data = json.loads(msg['content'])
-                judge_content.append(f"你(px)回复说: {data.get('reply', [''])}")
+                try:
+                    data = json.loads(msg['content'])
+                    reply = data.get('reply', ['']) if isinstance(data, dict) else msg['content']
+                except (json.JSONDecodeError, TypeError):
+                    reply = msg['content']
+                judge_content.append(f"你(px)回复说: {reply}")
         content = "\n".join(judge_content)
         
         completion_obj = await client.chat.completions.create(
