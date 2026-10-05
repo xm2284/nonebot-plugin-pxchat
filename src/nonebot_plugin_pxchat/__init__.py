@@ -287,8 +287,15 @@ class GroupProbabilityManager:
             return False
     
     def get_probability(self, group_id: str) -> float:
-        """获取活跃度"""
-        return group_probability_states.get(group_id, 0.0)
+        """获取活跃度。
+
+        群在被 @ 触发前不会出现在 group_probability_states 中，
+        此时应回退为配置的基础概率（group_chat_probability），
+        否则会一直返回 0.0，导致设置了概率也永远不会主动参与群聊。
+        """
+        if group_id in group_probability_states:
+            return group_probability_states[group_id]
+        return chat_manager.get_group_chat_probability()
     
     def has_active_timer(self, group_id: str) -> bool:
         """检查是否有活跃定时器"""
